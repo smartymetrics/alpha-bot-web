@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "pickleparser": "^0.2.1"
+  }
+}
