@@ -47,7 +47,7 @@ export function TokenMonitor() {
   const [tokens, setTokens] = useState<Token[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedGrades, setSelectedGrades] = useState<string[]>([...ALL_GRADES]) // ✅ all selected by default
-  const [isStreaming, setIsStreaming] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(true)
   const [isConnected, setIsConnected] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<string>("")
 
