@@ -58,7 +58,7 @@ const downloadOverlapResults = async (): Promise<any[] | null> => {
 
     const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
-      .download(FILE_NAME);
+      .download(`${FILE_NAME}?v=${Date.now()}`)
 
     if (error || !data) {
       console.warn("[v1] Supabase download failed:", error?.message);
