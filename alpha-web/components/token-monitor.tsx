@@ -46,7 +46,7 @@ const getGradeColor = (grade: string) => {
 export function TokenMonitor() {
   const [tokens, setTokens] = useState<Token[]>([])
   const [searchTerm, setSearchTerm] = useState("")
-  const [selectedGrades, setSelectedGrades] = useState<string[]>([...ALL_GRADES]) // ✅ all selected by default
+  const [selectedGrades, setSelectedGrades] = useState<string[]>([...ALL_GRADES])
   const [isStreaming, setIsStreaming] = useState(true)
   const [isConnected, setIsConnected] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<string>("")
@@ -54,29 +54,16 @@ export function TokenMonitor() {
   const fetchTokens = useCallback(async () => {
     try {
       console.log("[v1] Fetching tokens from API")
-      const response = await fetch("/api/tokens")
+      const response = await fetch(`/api/tokens?v=${Date.now()}`)
       if (!response.ok) throw new Error("Failed to fetch tokens")
 
-      const data: TokensResponse | TokensResponse[] = await response.json()
-
-      let snapshot: TokensResponse
-      if (Array.isArray(data)) {
-        snapshot = data.reduce((latest, current) =>
-          new Date(current.last_updated).getTime() >
-          new Date(latest.last_updated).getTime()
-            ? current
-            : latest
-        )
-      } else {
-        snapshot = data
-      }
-
-      const sortedTokens = [...(snapshot.tokens || [])].sort((a, b) => {
-        return new Date(b.discovered_at).getTime() - new Date(a.discovered_at).getTime()
-      })
+      const data: TokensResponse = await response.json()
+      const sortedTokens = [...(data.tokens || [])].sort(
+        (a, b) => new Date(b.discovered_at).getTime() - new Date(a.discovered_at).getTime()
+      )
 
       setTokens(sortedTokens)
-      setLastUpdated(snapshot.last_updated)
+      setLastUpdated(data.last_updated)
       setIsConnected(true)
       console.log("[v1] Successfully fetched", sortedTokens.length, "tokens")
     } catch (error) {
@@ -90,12 +77,9 @@ export function TokenMonitor() {
 
     if (isStreaming) {
       fetchTokens()
-      interval = setInterval(fetchTokens, 30000)
+      interval = setInterval(fetchTokens, 10000) // 🔥 poll every 10 seconds
     } else {
       setIsConnected(false)
-      if (interval) {
-        clearInterval(interval)
-      }
     }
 
     return () => {
@@ -163,7 +147,6 @@ export function TokenMonitor() {
         </div>
       </div>
 
-      {/* 🔎 Search + Grade Filter */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -175,14 +158,9 @@ export function TokenMonitor() {
           />
         </div>
 
-        {/* 🔄 Scrollable Grade Filter Bar */}
         <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1">
-          <Button size="sm" variant="outline" onClick={selectAllGrades}>
-            Select All
-          </Button>
-          <Button size="sm" variant="outline" onClick={clearAllGrades}>
-            Clear All
-          </Button>
+          <Button size="sm" variant="outline" onClick={selectAllGrades}>Select All</Button>
+          <Button size="sm" variant="outline" onClick={clearAllGrades}>Clear All</Button>
 
           {ALL_GRADES.map((grade) => (
             <Button
@@ -198,8 +176,6 @@ export function TokenMonitor() {
         </div>
       </div>
 
-
-      {/* 🔎 Token Table */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
