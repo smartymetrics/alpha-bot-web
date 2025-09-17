@@ -127,7 +127,7 @@ export function TokenMonitor() {
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-3xl font-bold text-balance">Token Monitor</h2>
-          <p className="text-muted-foreground">Real-time monitoring of new Solana tokens with AI-powered grading</p>
+          <p className="text-muted-foreground">Real-time monitoring of new Solana tokens with grading</p>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-sm">

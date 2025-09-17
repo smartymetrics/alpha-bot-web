@@ -13,8 +13,8 @@ export default function TradingDashboard() {
               <Activity className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-balance">Solana Trading Analytics</h1>
-              <p className="text-sm text-muted-foreground">Professional token monitoring & analysis</p>
+              <h1 className="text-2xl font-bold text-balance">ismarty</h1>
+              <p className="text-sm text-muted-foreground">Degen better with higher profitability</p>
             </div>
           </div>
         </div>
