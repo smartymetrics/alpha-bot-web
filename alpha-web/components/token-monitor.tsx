@@ -54,16 +54,29 @@ export function TokenMonitor() {
   const fetchTokens = useCallback(async () => {
     try {
       console.log("[v1] Fetching tokens from API")
-      const response = await fetch(`/api/tokens?v=${Date.now()}`)
+      const response = await fetch("/api/tokens")
       if (!response.ok) throw new Error("Failed to fetch tokens")
 
-      const data: TokensResponse = await response.json()
-      const sortedTokens = [...(data.tokens || [])].sort(
+      const data: TokensResponse | TokensResponse[] = await response.json()
+
+      let snapshot: TokensResponse
+      if (Array.isArray(data)) {
+        snapshot = data.reduce((latest, current) =>
+          new Date(current.last_updated).getTime() >
+          new Date(latest.last_updated).getTime()
+            ? current
+            : latest
+        )
+      } else {
+        snapshot = data
+      }
+
+      const sortedTokens = [...(snapshot.tokens || [])].sort(
         (a, b) => new Date(b.discovered_at).getTime() - new Date(a.discovered_at).getTime()
       )
 
       setTokens(sortedTokens)
-      setLastUpdated(data.last_updated)
+      setLastUpdated(snapshot.last_updated)
       setIsConnected(true)
       console.log("[v1] Successfully fetched", sortedTokens.length, "tokens")
     } catch (error) {
@@ -72,18 +85,37 @@ export function TokenMonitor() {
     }
   }, [])
 
+  // Polling with visibility check
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null
 
-    if (isStreaming) {
+    const startPolling = () => {
+      if (!isStreaming || document.hidden) return
       fetchTokens()
-      interval = setInterval(fetchTokens, 10000) // 🔥 poll every 10 seconds
-    } else {
-      setIsConnected(false)
+      interval = setInterval(fetchTokens, 10000)
     }
 
-    return () => {
+    const stopPolling = () => {
       if (interval) clearInterval(interval)
+    }
+
+    startPolling()
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopPolling()
+        console.log("[v1] Tab hidden, polling paused")
+      } else if (isStreaming) {
+        startPolling()
+        console.log("[v1] Tab visible, polling resumed")
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+
+    return () => {
+      stopPolling()
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
     }
   }, [isStreaming, fetchTokens])
 
@@ -147,6 +179,7 @@ export function TokenMonitor() {
         </div>
       </div>
 
+      {/* Search + Grade Filter */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -157,11 +190,9 @@ export function TokenMonitor() {
             className="pl-10"
           />
         </div>
-
         <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1">
           <Button size="sm" variant="outline" onClick={selectAllGrades}>Select All</Button>
           <Button size="sm" variant="outline" onClick={clearAllGrades}>Clear All</Button>
-
           {ALL_GRADES.map((grade) => (
             <Button
               key={grade}
@@ -176,6 +207,7 @@ export function TokenMonitor() {
         </div>
       </div>
 
+      {/* Token Table */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
