@@ -193,3 +193,4 @@ dmypy.json
 # package-lock.json  # Uncomment if using yarn
 # yarn.lock          # Uncomment if using npm
 # pnpm-lock.yaml     # Uncomment if using npm or yarn
+.vercel

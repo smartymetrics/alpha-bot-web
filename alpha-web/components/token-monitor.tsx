@@ -119,7 +119,15 @@ export function TokenMonitor() {
     }
   }, [isStreaming, fetchTokens])
 
-  const toggleStreaming = () => setIsStreaming(!isStreaming)
+  const toggleStreaming = () => {
+    if (isStreaming) {
+      setIsStreaming(false)
+      setIsConnected(false) // 🔴 Immediately mark as disconnected
+    } else {
+      setIsStreaming(true)
+      setIsConnected(true) // 🟢 Immediately mark as live
+    }
+  }
   const toggleGrade = (grade: string) => {
     setSelectedGrades((prev) =>
       prev.includes(grade) ? prev.filter((g) => g !== grade) : [...prev, grade]
