@@ -201,7 +201,7 @@ export function TokenMonitor() {
             </Button>
           ))}
         </div>
-      </div>
+      </div> 
 
       {/* Token Table */}
       <Card>
