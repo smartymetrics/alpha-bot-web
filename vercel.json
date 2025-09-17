@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/tokens",
-      "schedule": "*/30 * * * *"
+      "schedule": "*/1 * * * *"
     }
   ]
 }
