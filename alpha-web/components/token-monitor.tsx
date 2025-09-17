@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Search, Play, Pause, ExternalLink, Wifi, WifiOff } from "lucide-react"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 
 interface Token {
   id: string
@@ -50,20 +50,19 @@ export function TokenMonitor() {
   const [isStreaming, setIsStreaming] = useState(true)
   const [isConnected, setIsConnected] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<string>("")
+  const [newTokenIds, setNewTokenIds] = useState<string[]>([])
+  const prevTokenIdsRef = useRef<Set<string>>(new Set())
 
   const fetchTokens = useCallback(async () => {
     try {
-      console.log("[v1] Fetching tokens from API")
       const response = await fetch("/api/tokens")
       if (!response.ok) throw new Error("Failed to fetch tokens")
-
       const data: TokensResponse | TokensResponse[] = await response.json()
 
       let snapshot: TokensResponse
       if (Array.isArray(data)) {
         snapshot = data.reduce((latest, current) =>
-          new Date(current.last_updated).getTime() >
-          new Date(latest.last_updated).getTime()
+          new Date(current.last_updated).getTime() > new Date(latest.last_updated).getTime()
             ? current
             : latest
         )
@@ -75,17 +74,24 @@ export function TokenMonitor() {
         (a, b) => new Date(b.discovered_at).getTime() - new Date(a.discovered_at).getTime()
       )
 
+      const prevIds = prevTokenIdsRef.current
+      const currentIds = new Set(sortedTokens.map((t) => t.id))
+      const newIds = sortedTokens.filter((t) => !prevIds.has(t.id)).map((t) => t.id)
+      if (newIds.length > 0) {
+        setNewTokenIds(newIds)
+        setTimeout(() => setNewTokenIds([]), 2000)
+      }
+      prevTokenIdsRef.current = currentIds
+
       setTokens(sortedTokens)
       setLastUpdated(snapshot.last_updated)
       setIsConnected(true)
-      console.log("[v1] Successfully fetched", sortedTokens.length, "tokens")
     } catch (error) {
-      console.error("[v1] Error fetching tokens:", error)
+      console.error("Error fetching tokens:", error)
       setIsConnected(false)
     }
   }, [])
 
-  // Polling with visibility check
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null
 
@@ -102,17 +108,11 @@ export function TokenMonitor() {
     startPolling()
 
     const handleVisibilityChange = () => {
-      if (document.hidden) {
-        stopPolling()
-        console.log("[v1] Tab hidden, polling paused")
-      } else if (isStreaming) {
-        startPolling()
-        console.log("[v1] Tab visible, polling resumed")
-      }
+      if (document.hidden) stopPolling()
+      else if (isStreaming) startPolling()
     }
 
     document.addEventListener("visibilitychange", handleVisibilityChange)
-
     return () => {
       stopPolling()
       document.removeEventListener("visibilitychange", handleVisibilityChange)
@@ -120,13 +120,11 @@ export function TokenMonitor() {
   }, [isStreaming, fetchTokens])
 
   const toggleStreaming = () => setIsStreaming(!isStreaming)
-
   const toggleGrade = (grade: string) => {
     setSelectedGrades((prev) =>
       prev.includes(grade) ? prev.filter((g) => g !== grade) : [...prev, grade]
     )
   }
-
   const selectAllGrades = () => setSelectedGrades([...ALL_GRADES])
   const clearAllGrades = () => setSelectedGrades([])
 
@@ -140,43 +138,41 @@ export function TokenMonitor() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h2 className="text-3xl font-bold text-balance">Token Monitor</h2>
-          <p className="text-muted-foreground">Real-time monitoring of new Solana tokens with grading</p>
+      {/* Sticky top status bar */}
+      <div className="sticky top-0 z-50 bg-white border-b border-gray-200 p-2 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-2">
+          {isConnected ? (
+            <>
+              <Wifi className="h-5 w-5 text-green-600 animate-pulse" />
+              <span className="text-green-600 font-medium">Live</span>
+            </>
+          ) : (
+            <>
+              <WifiOff className="h-5 w-5 text-red-600 animate-pulse" />
+              <span className="text-red-600 font-medium">Disconnected</span>
+            </>
+          )}
+          <span className="ml-4 text-sm text-muted-foreground animate-pulse">
+            Last updated: {lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : "-"}
+          </span>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-sm">
-            {isConnected ? (
-              <>
-                <Wifi className="h-4 w-4 text-green-600" />
-                <span className="text-green-600">Live</span>
-              </>
-            ) : (
-              <>
-                <WifiOff className="h-4 w-4 text-red-600" />
-                <span className="text-red-600">Disconnected</span>
-              </>
-            )}
-          </div>
-          <Button
-            onClick={toggleStreaming}
-            variant={isStreaming ? "default" : "outline"}
-            className="flex items-center gap-2"
-          >
-            {isStreaming ? (
-              <>
-                <Pause className="h-4 w-4" />
-                Pause Stream
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4" />
-                Start Stream
-              </>
-            )}
-          </Button>
-        </div>
+        <Button
+          onClick={toggleStreaming}
+          variant={isStreaming ? "default" : "outline"}
+          className="flex items-center gap-2"
+        >
+          {isStreaming ? (
+            <>
+              <Pause className="h-4 w-4" />
+              Pause Stream
+            </>
+          ) : (
+            <>
+              <Play className="h-4 w-4" />
+              Start Stream
+            </>
+          )}
+        </Button>
       </div>
 
       {/* Search + Grade Filter */}
@@ -210,14 +206,7 @@ export function TokenMonitor() {
       {/* Token Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            Live Token Feed
-            {lastUpdated && (
-              <span className="text-sm font-normal text-muted-foreground">
-                Last updated: {new Date(lastUpdated).toLocaleTimeString()}
-              </span>
-            )}
-          </CardTitle>
+          <CardTitle>Live Token Feed</CardTitle>
           <CardDescription>
             Tokens are graded based on wallet overlap analysis with previously successful tokens
           </CardDescription>
@@ -239,12 +228,17 @@ export function TokenMonitor() {
                 {filteredTokens.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                      {isStreaming ? "Loading token data..." : "Click 'Start Stream' to see live token data"}
+                      {isStreaming ? <span className="animate-pulse">Loading token data...</span> : "Click 'Start Stream' to see live token data"}
                     </TableCell>
                   </TableRow>
                 ) : (
                   filteredTokens.map((token) => (
-                    <TableRow key={token.id}>
+                    <TableRow
+                      key={token.id}
+                      className={`transition-colors duration-700 ${
+                        newTokenIds.includes(token.id) ? "bg-green-50" : ""
+                      }`}
+                    >
                       <TableCell>
                         <div>
                           <div className="font-medium">{token.symbol}</div>
@@ -265,11 +259,7 @@ export function TokenMonitor() {
                         {new Date(token.discovered_at).toLocaleTimeString()}
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => window.open(token.dexscreener_url, "_blank")}
-                        >
+                        <Button variant="ghost" size="sm" onClick={() => window.open(token.dexscreener_url, "_blank")}>
                           <ExternalLink className="h-4 w-4" />
                         </Button>
                       </TableCell>
