@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Search, Play, Pause, ExternalLink, Wifi, WifiOff } from "lucide-react"
+import { Search, Play, Pause, ExternalLink, Wifi, WifiOff, ArrowUp, ArrowDown } from "lucide-react"
 import { useState, useEffect, useCallback, useRef } from "react"
 
 interface Token {
@@ -14,10 +14,18 @@ interface Token {
   name: string
   address: string
   grade: string
-  overlap_percentage: number
-  concentration: number
   discovered_at: string
   dexscreener_url: string
+
+  // Live enriched fields
+  price_usd?: number
+  price_change_24h?: number
+  buys_24h?: number
+  sells_24h?: number
+  volume_24h?: number
+  liquidity_usd?: number
+  marketcap?: number
+  fdv?: number
 }
 
 interface TokensResponse {
@@ -43,6 +51,12 @@ const getGradeColor = (grade: string) => {
   }
 }
 
+// Format numbers nicely (1.2M, 3.4K, etc.)
+const formatNumber = (value?: number): string => {
+  if (value === undefined || value === null) return "-"
+  return Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(value)
+}
+
 export function TokenMonitor() {
   const [tokens, setTokens] = useState<Token[]>([])
   const [searchTerm, setSearchTerm] = useState("")
@@ -52,6 +66,31 @@ export function TokenMonitor() {
   const [lastUpdated, setLastUpdated] = useState<string>("")
   const [newTokenIds, setNewTokenIds] = useState<string[]>([])
   const prevTokenIdsRef = useRef<Set<string>>(new Set())
+
+  const enrichWithDexscreener = async (token: Token): Promise<Token> => {
+    try {
+      const resp = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${token.address}`)
+      const data = await resp.json()
+      const pair = data?.pairs?.[0]
+      if (!pair) return token
+
+      return {
+        ...token,
+        price_usd: pair.priceUsd ? parseFloat(pair.priceUsd) : undefined,
+        price_change_24h: pair.priceChange?.h24,
+        buys_24h: pair.txns?.h24?.buys,
+        sells_24h: pair.txns?.h24?.sells,
+        volume_24h: pair.volume?.h24,
+        liquidity_usd: pair.liquidity?.usd,
+        marketcap: pair.marketCap,
+        fdv: pair.fdv,
+        dexscreener_url: pair.url || token.dexscreener_url,
+      }
+    } catch (e) {
+      console.error(`Dexscreener fetch failed for ${token.symbol}`, e)
+      return token
+    }
+  }
 
   const fetchTokens = useCallback(async () => {
     try {
@@ -70,9 +109,12 @@ export function TokenMonitor() {
         snapshot = data
       }
 
-      const sortedTokens = [...(snapshot.tokens || [])].sort(
+      let sortedTokens = [...(snapshot.tokens || [])].sort(
         (a, b) => new Date(b.discovered_at).getTime() - new Date(a.discovered_at).getTime()
       )
+
+      // Enrich with Dexscreener
+      sortedTokens = await Promise.all(sortedTokens.map(enrichWithDexscreener))
 
       const prevIds = prevTokenIdsRef.current
       const currentIds = new Set(sortedTokens.map((t) => t.id))
@@ -98,7 +140,7 @@ export function TokenMonitor() {
     const startPolling = () => {
       if (!isStreaming || document.hidden) return
       fetchTokens()
-      interval = setInterval(fetchTokens, 10000)
+      interval = setInterval(fetchTokens, 15000) // every 15s
     }
 
     const stopPolling = () => {
@@ -106,7 +148,6 @@ export function TokenMonitor() {
     }
 
     startPolling()
-
     const handleVisibilityChange = () => {
       if (document.hidden) stopPolling()
       else if (isStreaming) startPolling()
@@ -122,12 +163,13 @@ export function TokenMonitor() {
   const toggleStreaming = () => {
     if (isStreaming) {
       setIsStreaming(false)
-      setIsConnected(false) // 🔴 Immediately mark as disconnected
+      setIsConnected(false)
     } else {
       setIsStreaming(true)
-      setIsConnected(true) // 🟢 Immediately mark as live
+      setIsConnected(true)
     }
   }
+
   const toggleGrade = (grade: string) => {
     setSelectedGrades((prev) =>
       prev.includes(grade) ? prev.filter((g) => g !== grade) : [...prev, grade]
@@ -209,14 +251,14 @@ export function TokenMonitor() {
             </Button>
           ))}
         </div>
-      </div> 
+      </div>
 
       {/* Token Table */}
       <Card>
         <CardHeader>
           <CardTitle>Live Token Feed</CardTitle>
           <CardDescription>
-            Tokens are graded based on wallet overlap analysis with previously successful tokens
+            Tokens are graded and  enriched with real-time market data
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -226,53 +268,76 @@ export function TokenMonitor() {
                 <TableRow>
                   <TableHead>Token</TableHead>
                   <TableHead>Grade</TableHead>
-                  <TableHead>Overlap %</TableHead>
-                  <TableHead>Concentration</TableHead>
-                  <TableHead>Discovered</TableHead>
+                  <TableHead>Price</TableHead>
+                  <TableHead>24h Price Change</TableHead>
+                  <TableHead>Buys (24h)</TableHead>
+                  <TableHead>Sells (24h)</TableHead>
+                  <TableHead>Volume (24h)</TableHead>
+                  <TableHead>Liquidity</TableHead>
+                  <TableHead>Market Cap / FDV</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredTokens.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                       {isStreaming ? <span className="animate-pulse">Loading token data...</span> : "Click 'Start Stream' to see live token data"}
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredTokens.map((token) => (
-                    <TableRow
-                      key={token.id}
-                      className={`transition-colors duration-700 ${
-                        newTokenIds.includes(token.id) ? "bg-green-50" : ""
-                      }`}
-                    >
-                      <TableCell>
-                        <div>
-                          <div className="font-medium">{token.symbol}</div>
-                          <div className="text-sm text-muted-foreground">{token.name}</div>
-                          <div className="text-xs text-muted-foreground font-mono">{token.address}</div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={getGradeColor(token.grade)}>{token.grade}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-medium">{token.overlap_percentage.toFixed(1)}%</span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-medium">{token.concentration.toFixed(1)}%</span>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {new Date(token.discovered_at).toLocaleTimeString()}
-                      </TableCell>
-                      <TableCell>
-                        <Button variant="ghost" size="sm" onClick={() => window.open(token.dexscreener_url, "_blank")}>
-                          <ExternalLink className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  filteredTokens.map((token) => {
+                    const priceChange = token.price_change_24h ?? 0
+                    const hasMarketCap = token.marketcap !== undefined && token.marketcap !== null
+
+                    return (
+                      <TableRow
+                        key={token.id}
+                        className={`transition-colors duration-700 ${newTokenIds.includes(token.id) ? "bg-green-50" : ""}`}
+                      >
+                        <TableCell>
+                          <div>
+                            <div className="font-medium">{token.symbol}</div>
+                            <div className="text-sm text-muted-foreground">{token.name}</div>
+                            <div className="text-xs text-muted-foreground font-mono">{token.address}</div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={getGradeColor(token.grade)}>{token.grade}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          {token.price_usd ? `$${token.price_usd.toFixed(6)}` : "-"}
+                        </TableCell>
+                        <TableCell className={priceChange > 0 ? "text-green-600" : priceChange < 0 ? "text-red-600" : "text-gray-500"}>
+                          {priceChange > 0 && <ArrowUp className="inline h-4 w-4 mr-1" />}
+                          {priceChange < 0 && <ArrowDown className="inline h-4 w-4 mr-1" />}
+                          {priceChange.toFixed(2)}%
+                        </TableCell>
+                        <TableCell className="text-green-600 font-medium">
+                          {formatNumber(token.buys_24h)}
+                        </TableCell>
+                        <TableCell className="text-red-600 font-medium">
+                          {formatNumber(token.sells_24h)}
+                        </TableCell>
+                        <TableCell>
+                          ${formatNumber(token.volume_24h)}
+                        </TableCell>
+                        <TableCell>
+                          ${formatNumber(token.liquidity_usd)}
+                        </TableCell>
+                        <TableCell className={hasMarketCap ? "text-blue-600" : "text-gray-600"}>
+                          ${hasMarketCap
+                            ? `MCap: ${formatNumber(token.marketcap)}`
+                            : `FDV: ${formatNumber(token.fdv)}`}
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" onClick={() => window.open(token.dexscreener_url, "_blank")}>
+                            <ExternalLink className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
                 )}
               </TableBody>
             </Table>

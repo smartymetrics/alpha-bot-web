@@ -2,6 +2,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+export const dynamic = 'force-dynamic';
+
 const BUCKET_NAME = "monitor-data";
 const FILE_NAME = "overlap_results.json";
 

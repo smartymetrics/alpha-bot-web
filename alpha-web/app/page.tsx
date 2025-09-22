@@ -1,6 +1,7 @@
 "use client"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TokenMonitor } from "@/components/token-monitor"
+import TraderROIPage from "@/components/trader-roi"
 import { Activity, TrendingUp, Wallet } from "lucide-react"
 
 export default function TradingDashboard() {
@@ -27,11 +28,11 @@ export default function TradingDashboard() {
               <Activity className="h-4 w-4" />
               Token Monitor
             </TabsTrigger>
-            <TabsTrigger value="roi" className="flex items-center gap-2" disabled>
+            <TabsTrigger value="roi" className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
               Trader ROI
             </TabsTrigger>
-            <TabsTrigger value="wallet" className="flex items-center gap-2" disabled>
+            <TabsTrigger value="wallet" className="flex items-center gap-2">
               <Wallet className="h-4 w-4" />
               Wallet Analysis
             </TabsTrigger>
@@ -42,13 +43,14 @@ export default function TradingDashboard() {
           </TabsContent>
 
           <TabsContent value="roi" className="space-y-6">
-            <div className="flex items-center justify-center h-64">
+            <TraderROIPage />
+            {/* <div className="flex items-center justify-center h-64">
               <div className="text-center">
                 <TrendingUp className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                 <h3 className="text-lg font-semibold mb-2">Trader ROI Analysis</h3>
                 <p className="text-muted-foreground">Coming soon - Advanced trader performance metrics</p>
               </div>
-            </div>
+            </div> */}
           </TabsContent>
 
           <TabsContent value="wallet" className="space-y-6">
