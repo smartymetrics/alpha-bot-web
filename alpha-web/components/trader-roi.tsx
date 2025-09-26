@@ -18,20 +18,61 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { ArrowUpRight, ArrowDownRight, Minus, Loader2, Copy, Check } from "lucide-react"
+// Custom table components using standard HTML elements
+const Table = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => (
+  <table className={`w-full border-collapse ${className}`}>{children}</table>
+)
+
+const TableHeader = ({ children }: { children: React.ReactNode }) => (
+  <thead>{children}</thead>
+)
+
+const TableBody = ({ children }: { children: React.ReactNode }) => (
+  <tbody>{children}</tbody>
+)
+
+const TableRow = ({ children }: { children: React.ReactNode }) => (
+  <tr className="border-b border-gray-200 hover:bg-gray-50">{children}</tr>
+)
+
+const TableHead = ({ 
+  children, 
+  className = "", 
+  title,
+  onClick 
+}: { 
+  children: React.ReactNode; 
+  className?: string;
+  title?: string;
+  onClick?: () => void;
+}) => (
+  <th 
+    className={`px-4 py-3 text-left text-sm font-medium text-gray-900 ${className}`}
+    title={title}
+    onClick={onClick}
+  >
+    {children}
+  </th>
+)
+
+const TableCell = ({ 
+  children, 
+  className = "",
+  colSpan
+}: { 
+  children: React.ReactNode; 
+  className?: string;
+  colSpan?: number;
+}) => (
+  <td className={`px-4 py-3 text-sm ${className}`} colSpan={colSpan}>
+    {children}
+  </td>
+)
+import { ArrowUpRight, ArrowDownRight, Minus, Loader2, Copy, Check, Clock, CheckCircle, XCircle } from "lucide-react"
 
 // ---------------- Types ----------------
 interface TraderROIRecord {
   trader_id: string
-  // overall_current_value_of_holdings_usd: number
   overall_total_pnl: number
   overall_realized_profit_usd: number
   overall_estimated_gross_profit_on_sales: number
@@ -47,7 +88,6 @@ interface TraderROIRecord {
 
 interface TraderROIResult {
   id?: string
-  // generated_at may be missing from server responses — keep optional
   generated_at?: string | null
   trader_type: "all" | "early"
   params?: {
@@ -60,10 +100,19 @@ interface TraderROIResult {
   records: TraderROIRecord[]
 }
 
+interface AnalysisJob {
+  id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  createdAt: string
+  completedAt?: string
+  result?: TraderROIResult
+  error?: string
+  params: any
+}
+
 // ---------------- Helpers ----------------
 const normalizeResult = (raw: any): TraderROIResult => {
   const params = raw?.params || raw?.payload?.params || {}
-  // Prefer server-provided timestamps and ids. Do NOT invent client-side timestamps.
   const generated_at = raw?.generated_at || raw?.created_at || raw?.createdAt || raw?.timestamp || null
 
   const inferredType: "all" | "early" = params?.window_hours && params.window_hours > 0 ? "early" : "all"
@@ -82,7 +131,6 @@ const normalizeResult = (raw: any): TraderROIResult => {
     tokens: raw?.tokens || [],
     records: records.map((r: any) => ({
       trader_id: r.trader_id || r.trader || r.wallet || "",
-      // overall_current_value_of_holdings_usd: Number(r.overall_current_value_of_holdings_usd ?? r.overall_current_value_of_holdings ?? 0),
       overall_total_pnl: Number(r.overall_total_pnl ?? r.total_pnl ?? 0),
       overall_realized_profit_usd: Number(r.overall_realized_profit_usd ?? r.realized_profit ?? 0),
       overall_estimated_gross_profit_on_sales: Number(r.overall_estimated_gross_profit_on_sales ?? 0),
@@ -103,15 +151,12 @@ const formatNumber = (n: number | undefined, decimals = 2) =>
     ? "-"
     : n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
 
-// Format a short consistent label for dropdown
 const formatAnalysisDropdownLabel = (a: TraderROIResult) => {
   try {
     if (a.generated_at && !isNaN(Date.parse(String(a.generated_at)))) {
       const d = new Date(String(a.generated_at))
-      // Use UTC-like compact format YYYY-MM-DD HH:mm (so labels are consistent across clients)
       const dateStr = d.toISOString().slice(0, 16).replace("T", " ")
       const tokenCount = a.tokens?.length ?? 0
-      // show first token preview if there's just 1 or small addresses, else show count
       let tokenPart = `(${tokenCount} tokens)`
       if (tokenCount === 1 && a.tokens && a.tokens[0]) {
         const t = a.tokens[0]
@@ -135,8 +180,17 @@ const displayDateOrId = (a: TraderROIResult) => {
   return "Unknown"
 }
 
-// Build a stable key for deduping/selecting (prefer id then timestamp then token+params)
 const keyFor = (a: TraderROIResult) => a.id ?? a.generated_at ?? JSON.stringify({ tokens: a.tokens ?? [], params: a.params ?? {} })
+
+const formatJobDuration = (startTime: string, endTime?: string) => {
+  const start = new Date(startTime).getTime()
+  const end = endTime ? new Date(endTime).getTime() : Date.now()
+  const duration = Math.floor((end - start) / 1000)
+  
+  if (duration < 60) return `${duration}s`
+  if (duration < 3600) return `${Math.floor(duration / 60)}m ${duration % 60}s`
+  return `${Math.floor(duration / 3600)}h ${Math.floor((duration % 3600) / 60)}m`
+}
 
 // ---------------- UI Components ----------------
 const PnLCell = ({ value, isPercent = false }: { value: number; isPercent?: boolean }) => {
@@ -192,10 +246,81 @@ function WalletCell({ address }: { address: string }) {
   )
 }
 
+// Job status component
+function JobStatusCard({ job }: { job: AnalysisJob }) {
+  const getStatusIcon = () => {
+    switch (job.status) {
+      case 'pending':
+        return <Clock className="h-4 w-4 text-gray-500" />
+      case 'processing':
+        return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+      case 'completed':
+        return <CheckCircle className="h-4 w-4 text-green-500" />
+      case 'failed':
+        return <XCircle className="h-4 w-4 text-red-500" />
+      default:
+        return <Clock className="h-4 w-4 text-gray-500" />
+    }
+  }
+
+  const getStatusColor = () => {
+    switch (job.status) {
+      case 'pending':
+        return 'bg-gray-50 border-gray-200'
+      case 'processing':
+        return 'bg-blue-50 border-blue-200'
+      case 'completed':
+        return 'bg-green-50 border-green-200'
+      case 'failed':
+        return 'bg-red-50 border-red-200'
+      default:
+        return 'bg-gray-50 border-gray-200'
+    }
+  }
+
+  const tokens = job.params?.tokens || []
+
+  return (
+    <div className={`flex items-center justify-between p-3 rounded-lg border ${getStatusColor()}`}>
+      <div className="flex items-center gap-3">
+        {getStatusIcon()}
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="font-medium">Job {job.id.slice(0, 8)}...</span>
+            <Badge variant="secondary" className="text-xs">
+              {job.status === 'pending' && "Queued"}
+              {job.status === 'processing' && "Processing"}
+              {job.status === 'completed' && "Completed"}
+              {job.status === 'failed' && "Failed"}
+            </Badge>
+          </div>
+          {tokens.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {tokens.map((token: string, idx: number) => (
+                <span key={idx} className="text-xs text-gray-600 font-mono bg-white px-1 py-0.5 rounded">
+                  {token.length > 8 ? `${token.slice(0, 4)}...${token.slice(-4)}` : token}
+                </span>
+              ))}
+            </div>
+          )}
+          {job.status === 'failed' && job.error && (
+            <p className="text-xs text-red-600 mt-1">{job.error}</p>
+          )}
+        </div>
+      </div>
+      <div className="text-right text-sm text-gray-500">
+        <div>{formatJobDuration(job.createdAt, job.completedAt)}</div>
+        {job.status === 'processing' && <div className="text-xs">Running...</div>}
+      </div>
+    </div>
+  )
+}
+
 // ---------------- Page ----------------
 export default function TraderROIPage() {
   const [analyses, setAnalyses] = useState<TraderROIResult[]>([])
   const [loading, setLoading] = useState(true)
+  const [activeJobs, setActiveJobs] = useState<AnalysisJob[]>([])
 
   // keep a selected analysis key so user selection is stable
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
@@ -215,6 +340,175 @@ export default function TraderROIPage() {
     }
   )
 
+  // ---------------- Token freshness state ----------------
+  type TokenStatus = {
+    checking: boolean
+    checked: boolean
+    isFresh?: boolean
+    createdAt?: number | null
+    ageDays?: number | null
+    error?: string
+  }
+  const [tokenStatus, setTokenStatus] = useState<Record<string, TokenStatus>>({})
+
+  // Validate a single token by calling your API route: /api/trader-roi?token=...
+  const validateToken = async (token: string): Promise<boolean> => {
+    const t = token.trim()
+    if (!t) return false
+
+    // Avoid duplicate in-flight calls: if currently checking, just wait until checked
+    const existing = tokenStatus[t]
+    if (existing && existing.checking) {
+      return new Promise<boolean>((resolve) => {
+        const start = Date.now()
+        const interval = setInterval(() => {
+          const cur = tokenStatus[t]
+          if (cur && !cur.checking) {
+            clearInterval(interval)
+            resolve(Boolean(cur.checked && cur.isFresh))
+          } else if (Date.now() - start > 10000) {
+            clearInterval(interval)
+            resolve(false)
+          }
+        }, 200)
+      })
+    }
+
+    // mark checking
+    setTokenStatus(prev => ({ ...prev, [t]: { ...(prev[t] ?? {}), checking: true, checked: false, error: undefined } }))
+
+    try {
+      const res = await fetch(`/api/trader-roi?token=${encodeURIComponent(t)}`, { cache: "no-store" })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        const errMsg = body?.error ?? `HTTP ${res.status}`
+        setTokenStatus(prev => ({ ...prev, [t]: { checking: false, checked: true, isFresh: false, error: String(errMsg) } }))
+        return false
+      }
+
+      const data = await res.json().catch(() => null)
+      if (!data || typeof data.isFresh === "undefined") {
+        setTokenStatus(prev => ({ ...prev, [t]: { checking: false, checked: true, isFresh: false, error: "Invalid validation response" } }))
+        return false
+      }
+
+      setTokenStatus(prev => ({
+        ...prev,
+        [t]: {
+          checking: false,
+          checked: true,
+          isFresh: Boolean(data.isFresh),
+          createdAt: typeof data.createdAt === "number" ? data.createdAt : null,
+          ageDays: typeof data.ageDays === "number" ? data.ageDays : null,
+          error: undefined,
+        },
+      }))
+
+      return Boolean(data.isFresh)
+    } catch (err: any) {
+      console.error("[trader-roi] validateToken error:", err)
+      setTokenStatus(prev => ({ ...prev, [t]: { checking: false, checked: true, isFresh: false, error: String(err?.message ?? "Network error") } }))
+      return false
+    }
+  }
+
+  // Helper: current cleaned tokens (trimmed, non-empty)
+  const cleanedTokens = () => form.tokens.map(t => t.trim()).filter(Boolean)
+  const tokenCountValid = () => cleanedTokens().length >= 1 && cleanedTokens().length <= 3
+
+  // Job polling function
+  const pollJobStatus = async (jobId: string) => {
+    const maxPollingTime = 30 * 60 * 1000 // 30 minutes
+    const startTime = Date.now()
+    
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/trader-roi?jobId=${jobId}`)
+        if (!res.ok) {
+          console.error(`Failed to poll job ${jobId}:`, res.status)
+          setTimeout(poll, 10000) // Retry after 10 seconds on error
+          return
+        }
+        
+        const job = await res.json()
+        
+        // Update job status
+        setActiveJobs(prev => prev.map(j => 
+          j.id === jobId ? { ...j, status: job.status, completedAt: job.completedAt, error: job.error } : j
+        ))
+        
+        if (job.status === 'completed') {
+          // Job completed successfully
+          setActiveJobs(prev => prev.filter(j => j.id !== jobId))
+          
+          // Add result to analyses
+          if (job.result) {
+            const newNorm = normalizeResult(job.result)
+            setAnalyses(prev => {
+              const newKey = keyFor(newNorm)
+              const filtered = prev.filter(p => keyFor(p) !== newKey)
+              return [newNorm, ...filtered]
+            })
+            setSelectedKey(keyFor(newNorm))
+            
+            // Show success notification (you might want to replace this with a toast)
+            const tokens = job.result.tokens || []
+            const tokenText = tokens.length === 1 ? `token ${tokens[0].slice(0, 8)}...` : `${tokens.length} tokens`
+            alert(`Analysis completed successfully for ${tokenText}!`)
+          }
+          
+        } else if (job.status === 'failed') {
+          // Job failed
+          setActiveJobs(prev => prev.filter(j => j.id !== jobId))
+          alert(`Analysis failed: ${job.error || 'Unknown error'}`)
+          
+        } else if (Date.now() - startTime < maxPollingTime) {
+          // Still processing, poll again
+          setTimeout(poll, 5000) // Poll every 5 seconds
+        } else {
+          // Polling timeout
+          setActiveJobs(prev => prev.map(j => 
+            j.id === jobId ? { ...j, status: 'failed', error: 'Polling timeout' } : j
+          ))
+          alert("Analysis is taking longer than expected. Please check back later or contact support.")
+        }
+        
+      } catch (error) {
+        console.error("Error polling job status:", error)
+        if (Date.now() - startTime < maxPollingTime) {
+          setTimeout(poll, 10000) // Retry after 10 seconds on error
+        } else {
+          setActiveJobs(prev => prev.filter(j => j.id !== jobId))
+        }
+      }
+    }
+    
+    // Start polling after 2 seconds (give the job time to start)
+    setTimeout(poll, 2000)
+  }
+
+  // When tokens array changes, prune tokenStatus and validate
+  useEffect(() => {
+    const tokens = Array.from(new Set(cleanedTokens())) // unique trimmed tokens
+    // prune
+    setTokenStatus(prev => {
+      const next: Record<string, TokenStatus> = {}
+      for (const t of tokens) {
+        if (prev[t]) next[t] = prev[t]
+      }
+      return next
+    })
+
+    // validate missing tokens
+    tokens.forEach((t) => {
+      const s = tokenStatus[t]
+      if (!s || (!s.checked && !s.checking)) {
+        validateToken(t).catch(() => {})
+      }
+    })
+  }, [form.tokens])
+
+  // ---------------- Data fetching (analyses) ----------------
   const fetchAnalyses = async (forceSelectLatest = false) => {
     try {
       setLoading(true)
@@ -222,7 +516,7 @@ export default function TraderROIPage() {
       const data = await res.json()
       const normalized = (data.analyses || []).map((a: any) => normalizeResult(a))
 
-      // Deduplicate using a stable key (prefer id, then generated_at); pick newest by timestamp when available.
+      // Deduplicate using a stable key
       const dedupMap = new Map<string, TraderROIResult>()
       for (const a of normalized) {
         const k = keyFor(a)
@@ -239,14 +533,13 @@ export default function TraderROIPage() {
       const uniqueByKey = Array.from(dedupMap.values()).sort((a, b) => {
         const ta = a.generated_at ? Date.parse(String(a.generated_at)) : 0
         const tb = b.generated_at ? Date.parse(String(b.generated_at)) : 0
-        // if both timestamps are zero, fallback to lexicographic key order (useful if filenames are timestamp-like)
         if (ta === 0 && tb === 0) return keyFor(b).localeCompare(keyFor(a))
         return tb - ta
       })
 
       setAnalyses(uniqueByKey)
 
-      // select logic: if forced -> choose newest; otherwise preserve user selection if still present
+      // select logic
       setSelectedKey((prev) => {
         if (forceSelectLatest) {
           return uniqueByKey[0] ? keyFor(uniqueByKey[0]) : null
@@ -265,7 +558,6 @@ export default function TraderROIPage() {
       setLoading(false)
     }
   }
-  
 
   useEffect(() => {
     fetchAnalyses()
@@ -274,12 +566,9 @@ export default function TraderROIPage() {
   // current "selected" analysis (either user-picked or default latest)
   const selectedAnalysis = selectedKey ? analyses.find((a) => keyFor(a) === selectedKey) : analyses[0] || null
   const latest = selectedAnalysis
-  // history for the card (exclude the selected that is shown)
-  const history = analyses.filter((a) => keyFor(a) !== (latest ? keyFor(latest) : ""))
 
   const columns: { label: string; tooltip: string; key: keyof TraderROIRecord | "trader_id" }[] = [
     { label: "Wallet", tooltip: "The wallet address or trader ID", key: "trader_id" },
-    // { label: "Current Value ($)", tooltip: "Total current value in USD of the tokens analysed", key: "overall_current_value_of_holdings_usd" },
     { label: "Gross Profit ($)", tooltip: "Realized profits from sold tokens", key: "overall_realized_profit_usd" },
     { label: "Unrealized P&L ($)", tooltip: "Estimated profit/loss of tokens still held", key: "overall_estimated_unrealised_pnl" },
     { label: "ROI (%)", tooltip: "Return on investment", key: "ROI" },
@@ -292,7 +581,7 @@ export default function TraderROIPage() {
     { label: "Trades", tooltip: "Total number of trades", key: "number_of_trades" },
   ]
 
-  // sorting -- operate on the currently selected analysis records
+  // sorting
   const sortedRecords = latest?.records ? [...latest.records] : []
   if (sortConfig.key) {
     sortedRecords.sort((a, b) => {
@@ -307,10 +596,6 @@ export default function TraderROIPage() {
       return 0
     })
   }
-
-  // form helpers
-  const cleanedTokens = () => form.tokens.map(t => t.trim()).filter(Boolean)
-  const tokenCountValid = () => cleanedTokens().length >= 1 && cleanedTokens().length <= 3
 
   const addTokenField = () => {
     if (form.tokens.length >= 3) return
@@ -336,11 +621,15 @@ export default function TraderROIPage() {
     setForm((prev) => {
       const updated = [...prev.tokens]
       updated[idx] = updated[idx].trim()
+      const token = updated[idx].trim()
+      if (token) {
+        validateToken(token).catch(() => {})
+      }
       return { ...prev, tokens: updated }
     })
   }
 
-  // submit
+  // submit - now creates async job
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const tokens = cleanedTokens()
@@ -351,6 +640,25 @@ export default function TraderROIPage() {
 
     setSubmitting(true)
     try {
+      // Validate tokens first
+      const validationPromises = tokens.map((t) => {
+        const s = tokenStatus[t]
+        if (!s || (!s.checked && !s.checking)) {
+          return validateToken(t)
+        }
+        // Return the current status if already checked
+        return Promise.resolve(Boolean(s.isFresh))
+      })
+      
+      const validationResults = await Promise.all(validationPromises)
+      const allFresh = validationResults.every(Boolean)
+      if (!allFresh) {
+        alert("One or more tokens are not fresh (launched within 2 days). Please correct them before running analysis.")
+        setSubmitting(false)
+        return
+      }
+
+      // Create payload after validation passes
       const payload = {
         tokens,
         trader_type: form.traderType,
@@ -363,6 +671,9 @@ export default function TraderROIPage() {
         window: form.traderType === "early" ? Number(form.window || 0) : undefined,
       }
 
+      console.log("[trader-roi] Submitting payload:", payload)
+
+      // Start async job
       const res = await fetch("/api/trader-roi", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -371,43 +682,86 @@ export default function TraderROIPage() {
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "")
-        console.error("Failed to submit analysis request:", txt)
-        alert("Failed to submit request.")
-      } else {
-        // prefer to use returned analysis immediately (so user sees their run),
-        // fall back to re-fetch if response doesn't contain a stable key.
-        const body = await res.json().catch(() => null)
-        if (body && body.analysis) {
-          const newNorm = normalizeResult(body.analysis)
-          // if we don't have a stable key (neither id nor generated_at), prefer to refetch the list
-          if (!newNorm.id && !newNorm.generated_at) {
-            await fetchAnalyses()
-          } else {
-            setAnalyses((prev) => {
-              const newKey = keyFor(newNorm)
-              const filtered = prev.filter((p) => keyFor(p) !== newKey)
-              return [newNorm, ...filtered]
-            })
-            setSelectedKey(keyFor(newNorm))
-          }
-        } else {
-          // no analysis in response: refresh list from server
-          await fetchAnalyses()
-        }
-
-        // reset form
-        setForm({ tokens: [""], traderType: "all", minBuy: 100, minNumTokens: 1, window: "" })
+        console.error("Failed to submit analysis request:", res.status, txt)
+        alert(`Analysis taking longer than usual, Please use the refresh button to see output after some minutes: ${res.status} ${res.statusText}`)
+        return
       }
+
+      const result = await res.json()
+      console.log("[trader-roi] Job creation response:", result)
+
+      const jobId = result.jobId
+
+      if (jobId) {
+        // Add job to tracking
+        const newJob: AnalysisJob = {
+          id: jobId,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+          params: payload
+        }
+        
+        setActiveJobs(prev => [newJob, ...prev])
+        
+        // Start polling for job status
+        pollJobStatus(jobId)
+        
+        // Show success message
+        const tokenText = tokens.length === 1 ? 
+          `token ${tokens[0].slice(0, 8)}...` : 
+          `${tokens.length} tokens`
+        alert(`Analysis started for ${tokenText}! You can continue using the app while we process your request.`)
+        
+        // Reset form only after successful submission
+        setForm({ tokens: [""], traderType: "all", minBuy: 100, minNumTokens: 1, window: "" })
+        setTokenStatus({})
+      } else {
+        console.error("No jobId in response:", result)
+        alert("Failed to start analysis: No job ID returned")
+      }
+
     } catch (err) {
       console.error("Error submitting analysis:", err)
-      alert("Error submitting analysis.")
+      // More detailed error message
+      if (err instanceof Error) {
+        alert(`Error submitting analysis: ${err.message}`)
+      } else {
+        alert("Error submitting analysis: Unknown error occurred")
+      }
     } finally {
       setSubmitting(false)
     }
   }
 
+  // Determine if Run Analysis button should be disabled
+  const enteredTokens = cleanedTokens()
+  const isRunDisabled = submitting || !tokenCountValid() || enteredTokens.some(t => {
+    const s = tokenStatus[t]
+    return !(s && s.checked && s.isFresh)
+  })
+
   return (
     <div className="space-y-6">
+      {/* Active Jobs Card */}
+      {activeJobs.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+              Active Analysis Jobs
+            </CardTitle>
+            <CardDescription>Jobs currently being processed</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {activeJobs.map(job => (
+                <JobStatusCard key={job.id} job={job} />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Run New Analysis Form */}
       <Card>
         <CardHeader>
@@ -420,26 +774,50 @@ export default function TraderROIPage() {
             <div>
               <label className="text-xs font-medium mb-2 block">Token Addresses (1–3)</label>
               <div className="space-y-2">
-                {form.tokens.map((token, idx) => (
-                  <div key={idx} className="flex items-center gap-2">
-                    <Input
-                      value={token}
-                      onChange={(e) => updateToken(idx, e.target.value)}
-                      onBlur={() => handleTokenBlur(idx)}
-                      placeholder="Enter token address"
-                      className="text-sm flex-1"
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => removeTokenField(idx)}
-                      disabled={form.tokens.length === 1}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                ))}
+                {form.tokens.map((token, idx) => {
+                  const t = token.trim()
+                  const status = t ? tokenStatus[t] : undefined
+
+                  return (
+                    <div key={idx} className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={token}
+                          onChange={(e) => updateToken(idx, e.target.value)}
+                          onBlur={() => handleTokenBlur(idx)}
+                          placeholder="Enter token address"
+                          className="text-sm flex-1"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => removeTokenField(idx)}
+                          disabled={form.tokens.length === 1}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+
+                      {/* Inline validation message */}
+                      <div>
+                        {t ? (
+                          status?.checking ? (
+                            <p className="text-xs text-gray-500 mt-1">Checking token launch date...</p>
+                          ) : status?.error ? (
+                            <p className="text-xs text-red-500 mt-1">Error: {status.error}</p>
+                          ) : status?.checked && status?.isFresh ? (
+                            <p className="text-xs text-green-600 mt-1">✅ Token is less than 2 days old</p>
+                          ) : status?.checked && !status?.isFresh ? (
+                            <p className="text-xs text-red-500 mt-1">⚠️ Use a token launched less than 2 days ago</p>
+                          ) : (
+                            <p className="text-xs text-gray-500 mt-1">Address will be validated automatically.</p>
+                          )
+                        ) : null}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
               <div className="flex items-center gap-3 mt-2">
                 <Button type="button" size="sm" onClick={addTokenField} disabled={form.tokens.length >= 3}>
@@ -500,9 +878,9 @@ export default function TraderROIPage() {
 
             {/* Submit */}
             <div className="flex justify-end pt-2">
-              <Button type="submit" disabled={submitting || !tokenCountValid()} size="sm">
+              <Button type="submit" disabled={isRunDisabled} size="sm">
                 {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {submitting ? "Running..." : "Run Analysis"}
+                {submitting ? "Starting Analysis..." : "Run Analysis"}
               </Button>
             </div>
           </form>
@@ -514,9 +892,7 @@ export default function TraderROIPage() {
         <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="flex items-center gap-2">
             <CardTitle className="text-xl font-semibold flex items-center gap-2">📊 Trader ROI Analysis</CardTitle>
-            {/* <CardDescription className="hidden sm:block">View and compare runs</CardDescription> */}
           </div>
-          {/* NEW: Dropdown to select which analysis to view */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500 hidden sm:inline">View analyses by other users:</span>
 
@@ -546,14 +922,18 @@ export default function TraderROIPage() {
               </SelectContent>
             </Select>
 
-            {/* Refresh button */}
-            <Button size="sm" variant="outline" onClick={() => fetchAnalyses(true)} title="Refresh and show the latest analysis">Refresh (latest)</Button>
+            <Button size="sm" variant="outline" onClick={() => fetchAnalyses(true)} title="Refresh and show the latest analysis">
+              Refresh (latest)
+            </Button>
           </div>
         </CardHeader>
 
         <CardContent>
           {loading ? (
-            <p>Loading...</p>
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+              <span className="ml-2 text-gray-500">Loading analyses...</span>
+            </div>
           ) : latest ? (
             <div className="space-y-4">
               {/* Summary */}
@@ -586,102 +966,74 @@ export default function TraderROIPage() {
               )}
 
               {/* Results Table */}
-              <div className="overflow-x-auto border rounded-md">
-                {/* show roughly 15 rows (scroll for the rest) */}
-                <div style={{ maxHeight: "660px" }} className="overflow-y-auto">
-                  <Table>
-                    <TableHeader>
+              <div style={{ maxHeight: "660px" }} className="overflow-auto border rounded-md">
+                <Table className="min-w-max">
+                  <TableHeader>
+                    <TableRow>
+                      {columns.map((h, i) => (
+                        <TableHead
+                          key={i}
+                          title={h.tooltip}
+                          onClick={() => {
+                            if (sortConfig.key === h.key) {
+                              setSortConfig({
+                                key: h.key as keyof TraderROIRecord,
+                                direction: sortConfig.direction === "asc" ? "desc" : "asc",
+                              })
+                            } else {
+                              setSortConfig({ key: h.key as keyof TraderROIRecord, direction: "asc" })
+                            }
+                          }}
+                          className={`cursor-pointer select-none sticky top-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm ${
+                            i === 0 ? "left-0 z-30 border-r border-gray-200 dark:border-slate-700" : "z-20"
+                          }`}
+                        >
+                          <div className="flex items-center gap-1">
+                            {h.label}
+                            {sortConfig.key === h.key && <span>{sortConfig.direction === "asc" ? "▲" : "▼"}</span>}
+                          </div>
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {Array.isArray(sortedRecords) && sortedRecords.length === 0 ? (
                       <TableRow>
-                        {columns.map((h, i) => (
-                          <TableHead
-                            key={i}
-                            title={h.tooltip}
-                            onClick={() => {
-                              if (sortConfig.key === h.key) {
-                                setSortConfig({
-                                  key: h.key,
-                                  direction: sortConfig.direction === "asc" ? "desc" : "asc",
-                                })
-                              } else {
-                                setSortConfig({ key: h.key as keyof TraderROIRecord, direction: "asc" })
-                              }
-                            }}
-                            className="cursor-pointer select-none"
-                          >
-                            <div className="flex items-center gap-1">
-                              {h.label}
-                              {sortConfig.key === h.key && <span>{sortConfig.direction === "asc" ? "▲" : "▼"}</span>}
-                            </div>
-                          </TableHead>
-                        ))}
+                        <TableCell colSpan={columns.length} className="text-center text-gray-500 py-6">
+                          No profitable trader found that has achieved the set minimum first trade buy amount
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {/* NEW BEHAVIOR: if records array exists but is empty, show single full-width row with message */}
-                      {Array.isArray(sortedRecords) && sortedRecords.length === 0 ? (
-                        <TableRow>
-                          {/* colSpan must match columns length */}
-                          <TableCell colSpan={columns.length} className="text-center text-gray-500 py-6">
-                            No profitable trader found that has achieved the set minimum first trade buy amount
+                    ) : (
+                      sortedRecords.map((r, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="sticky left-0 bg-white dark:bg-slate-900 z-10 border-r border-gray-200 dark:border-slate-700">
+                            <WalletCell address={r.trader_id} />
                           </TableCell>
+                          <TableCell><PnLCell value={r.overall_realized_profit_usd} /></TableCell>
+                          <TableCell><PnLCell value={r.overall_estimated_unrealised_pnl} /></TableCell>
+                          <TableCell><PnLCell value={r.ROI * 100} isPercent /></TableCell>
+                          <TableCell><PnLCell value={r.overall_total_pnl} /></TableCell>
+                          <TableCell>${formatNumber(r.overall_total_usd_spent)}</TableCell>
+                          <TableCell>{formatNumber(r.win_rate * 100)}%</TableCell>
+                          <TableCell>${formatNumber(r.overall_total_sales_revenue)}</TableCell>
+                          <TableCell>{r.num_unique_tokens_traded}</TableCell>
+                          <TableCell>{r.num_tokens_in_profit}</TableCell>
+                          <TableCell>{r.number_of_trades}</TableCell>
                         </TableRow>
-                      ) : (
-                        sortedRecords.map((r, i) => (
-                          <TableRow key={i}>
-                            <TableCell><WalletCell address={r.trader_id} /></TableCell>
-                            {/* <TableCell>${formatNumber(r.overall_current_value_of_holdings_usd)}</TableCell> */}
-                            <TableCell><PnLCell value={r.overall_realized_profit_usd} /></TableCell>
-                            <TableCell><PnLCell value={r.overall_estimated_unrealised_pnl} /></TableCell>
-                            <TableCell><PnLCell value={r.ROI * 100} isPercent /></TableCell>
-                            <TableCell><PnLCell value={r.overall_total_pnl} /></TableCell>
-                            <TableCell>${formatNumber(r.overall_total_usd_spent)}</TableCell>
-                            <TableCell>{formatNumber(r.win_rate * 100)}%</TableCell>
-                            <TableCell>${formatNumber(r.overall_total_sales_revenue)}</TableCell>
-                            <TableCell>{r.num_unique_tokens_traded}</TableCell>
-                            <TableCell>{r.num_tokens_in_profit}</TableCell>
-                            <TableCell>{r.number_of_trades}</TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
               </div>
             </div>
           ) : (
-            <p>No analyses available yet.</p>
+            <div className="text-center py-8">
+              <p className="text-gray-500">No analyses available yet.</p>
+              <p className="text-sm text-gray-400 mt-2">Run your first analysis above to get started.</p>
+            </div>
           )}
         </CardContent>
       </Card>
-
-      {/* History Card */}
-      {/* {history.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">📜 Past Analyses</CardTitle>
-            <CardDescription>Previous runs (most recent first)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-3 text-sm">
-              {history.map((h, idx) => (
-                <li key={idx} className="border p-2 rounded-md bg-gray-50 flex flex-col sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <span className="font-medium">{displayDateOrId(h)}</span>{" "}
-                    — <Badge>{h.trader_type === "early" ? "Early Traders" : "All Traders"}</Badge>
-                  </div>
-                  <div className="flex flex-wrap gap-2 mt-2 sm:mt-0">
-                    {h.tokens?.map((t, i) => (
-                      <Badge key={i} variant="secondary" className="truncate max-w-[100px] text-xs" title={t}>
-                        {t.length > 10 ? `${t.slice(0, 6)}…${t.slice(-4)}` : t}
-                      </Badge>
-                    ))}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )} */}
     </div>
   )
 }
