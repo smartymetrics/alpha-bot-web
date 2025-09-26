@@ -27,7 +27,7 @@ jobs:
           (async () => {
             const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
             const page = await browser.newPage();
-            await page.goto('https://ismarty.vercel.com, { waitUntil: 'networkidle2', timeout: 60000 });
+            await page.goto('https://ismarty.vercel.com', { waitUntil: 'networkidle2', timeout: 60000 });
             console.log('✅ Token Monitor visited at', new Date().toISOString());
             await browser.close();
           })();
