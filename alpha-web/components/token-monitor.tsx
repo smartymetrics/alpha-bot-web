@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -129,10 +129,12 @@ interface Token {
   quote_token_name?: string
   quote_token_symbol?: string
   price_native?: number
-  // holders?: number
   website?: string
   twitter?: string
   telegram?: string
+
+  // Price coming from the server (overlap_results.json / route.ts)
+  call_price?: number
 }
 
 interface TokensResponse {
@@ -171,7 +173,7 @@ const formatTimeAgo = (dateString?: string): string => {
   const minutes = Math.floor(diff / 60000)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
-  
+
   if (days > 0) return `${days}d`
   if (hours > 0) return `${hours}h`
   if (minutes > 0) return `${minutes}m`
@@ -226,8 +228,8 @@ export function TokenMonitor() {
 
       return {
         ...token,
-        price_usd: pair.priceUsd ? parseFloat(pair.priceUsd) : undefined,
-        price_native: pair.priceNative ? parseFloat(pair.priceNative) : undefined,
+        price_usd: pair.priceUsd ? parseFloat(pair.priceUsd) : token.price_usd,
+        price_native: pair.priceNative ? parseFloat(pair.priceNative) : token.price_native,
         price_change_5m: pair.priceChange?.m5,
         price_change_1h: pair.priceChange?.h1,
         price_change_6h: pair.priceChange?.h6,
@@ -248,16 +250,15 @@ export function TokenMonitor() {
         marketcap: pair.marketCap,
         fdv: pair.fdv,
         pair_address: pair.pairAddress,
-        pair_created_at: pair.pairCreatedAt ? new Date(pair.pairCreatedAt).toISOString() : undefined,
-        dex: pair.dexId,
-        base_token_name: pair.baseToken?.name,
-        base_token_symbol: pair.baseToken?.symbol,
-        quote_token_name: pair.quoteToken?.name,
-        quote_token_symbol: pair.quoteToken?.symbol,
-        // holders: pair.info?.holders,
-        website: pair.info?.websites?.[0],
-        twitter: pair.info?.socials?.find((s: any) => s.type === 'twitter')?.url,
-        telegram: pair.info?.socials?.find((s: any) => s.type === 'telegram')?.url,
+        pair_created_at: pair.pairCreatedAt ? new Date(pair.pairCreatedAt).toISOString() : token.pair_created_at,
+        dex: pair.dexId || token.dex,
+        base_token_name: pair.baseToken?.name || token.base_token_name,
+        base_token_symbol: pair.baseToken?.symbol || token.base_token_symbol,
+        quote_token_name: pair.quoteToken?.name || token.quote_token_name,
+        quote_token_symbol: pair.quoteToken?.symbol || token.quote_token_symbol,
+        website: pair.info?.websites?.[0] || token.website,
+        twitter: pair.info?.socials?.find((s: any) => s.type === 'twitter')?.url || token.twitter,
+        telegram: pair.info?.socials?.find((s: any) => s.type === 'telegram')?.url || token.telegram,
         dexscreener_url: pair.url || token.dexscreener_url,
       }
     } catch (e) {
@@ -284,21 +285,27 @@ export function TokenMonitor() {
         snapshot = data
       }
 
-      let sortedTokens = [...(snapshot.tokens || [])].sort(
-        (a, b) => new Date(b.discovered_at).getTime() - new Date(a.discovered_at).getTime()
-      )
+      // Map server-provided call price into each token as `call_price` so we can use it as the "price from overlap_results.json"
+      let sortedTokens = [...(snapshot.tokens || [])]
+        .map((t: any) => {
+          const callPrice = t.priceUsd ?? t.price_usd ?? null
+          return { ...t, call_price: callPrice !== null ? Number(callPrice) : undefined }
+        })
+        .sort((a, b) => new Date(b.discovered_at).getTime() - new Date(a.discovered_at).getTime())
 
-      // Enrich with Dexscreener
+      // Enrich with Dexscreener (keeps the same shape but enrichment won't overwrite call_price)
       sortedTokens = await Promise.all(sortedTokens.map(enrichWithDexscreener))
 
-      // NEW: maintain initialPricesRef (first-seen price)
+      // NEW: maintain initialPricesRef (first-seen price) but ALWAYS seed/overwrite with server call_price when available
       const prevIds = prevTokenIdsRef.current
       const currentIds = new Set(sortedTokens.map((t) => t.id))
 
-      // 1) Add initial price for tokens not yet cached (only if we have a price)
+      // Ensure initialPricesRef is derived ONLY from server call_price (overlap_results.json).
+      // If call_price exists for a token, we set/overwrite the initial price so baseline is always server-sourced.
       for (const t of sortedTokens) {
-        if (t.price_usd !== undefined && t.price_usd !== null && !initialPricesRef.current.has(t.id)) {
-          initialPricesRef.current.set(t.id, t.price_usd)
+        const serverCallPrice = (t as any).call_price
+        if (serverCallPrice !== undefined && serverCallPrice !== null) {
+          initialPricesRef.current.set(t.id, Number(serverCallPrice))
         }
       }
 
@@ -489,7 +496,6 @@ export function TokenMonitor() {
                   <TableHead className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm">Vol 24h</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm">Liquidity</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm">MCap/FDV</TableHead>
-                  {/* <TableHead className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm">Holders</TableHead> */}
                   <TableHead className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm">Links</TableHead>
                   <TableHead className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm">Action</TableHead>
                 </TableRow>
@@ -533,9 +539,10 @@ export function TokenMonitor() {
                       )
                     }
 
-                    // Calculate % From Call using initialPricesRef (first-seen price)
+                    // Calculate % From Call using initialPricesRef (which we now ensure is seeded from call_price)
                     const initial = initialPricesRef.current.get(token.id)
-                    const current = token.price_usd
+                    // current price prefer dexscreener price, fall back to server call price
+                    const current = token.price_usd !== undefined && token.price_usd !== null ? Number(token.price_usd) : (token.call_price !== undefined ? Number(token.call_price) : undefined)
                     let fromCallPct: number | null = null
                     if (initial !== undefined && initial !== null && current !== undefined && current !== null && initial !== 0) {
                       fromCallPct = ((current - initial) / initial) * 100
@@ -564,7 +571,7 @@ export function TokenMonitor() {
                         
                         {/* Price */}
                         <TableCell className="font-mono">
-                          {token.price_usd ? `$${token.price_usd.toFixed(6)}` : "-"}
+                          {current !== undefined ? `$${current.toFixed(6)}` : "-"}
                         </TableCell>
 
                         {/* % From Call (new) */}

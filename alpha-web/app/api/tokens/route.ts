@@ -6,10 +6,6 @@ export const dynamic = "force-dynamic";
 
 const BUCKET_NAME = "monitor-data";
 const FILE_NAME = "overlap_results.json";
-const PRICE_CHANGE_FOLDER = "price_change";
-
-// in-memory cache of filenames in the price_change folder (reset on server restart/page refresh)
-let cachedFiles: Set<string> | null = null;
 
 // ✅ Supabase client factory
 const getSupabaseClient = () => {
@@ -36,6 +32,9 @@ const parseOverlapResults = (json: any): any[] => {
     const latest = history[history.length - 1]?.result || {};
     const meta = latest.token_metadata || {};
 
+    // Extract current_price_usd from the dexscreener object
+    const currentPriceUsd = latest.dexscreener?.current_price_usd ?? null;
+
     tokens.push({
       id: tokenId,
       symbol: meta.symbol || "",
@@ -46,7 +45,7 @@ const parseOverlapResults = (json: any): any[] => {
       concentration: latest.concentration ?? 0,
       discovered_at: latest.checked_at || null,
       dexscreener_url: `https://dexscreener.com/solana/${tokenId}`,
-      priceUsd: meta.priceUsd ?? null, // ⚡ make sure token price is passed
+      priceUsd: currentPriceUsd, // ✅ this is the price frontend should use as "call price"
     });
   }
 
@@ -85,113 +84,7 @@ const downloadOverlapResults = async (): Promise<any[] | null> => {
   }
 };
 
-// Load cache once (fills cachedFiles with the names of files in the price_change folder)
-const loadCache = async (supabase: any) => {
-  if (cachedFiles !== null) return cachedFiles;
-
-  try {
-    const { data, error } = await supabase.storage
-      .from(BUCKET_NAME)
-      .list(PRICE_CHANGE_FOLDER);
-
-    if (error) {
-      console.error("[v1] list error (loadCache):", error.message);
-      cachedFiles = new Set();
-    } else {
-      cachedFiles = new Set((data || []).map((f: any) => f.name));
-    }
-  } catch (err) {
-    console.error("[v1] Exception loading cache:", err);
-    cachedFiles = new Set();
-  }
-
-  return cachedFiles;
-};
-
-// ✅ Ensure JSON file exists for initial price (uses cachedFiles to avoid repeated list calls)
-const ensureInitialPriceFile = async (supabase: any, token: any) => {
-  try {
-    const filePath = `${PRICE_CHANGE_FOLDER}/${token.address}.json`;
-    const filename = `${token.address}.json`;
-
-    // Only create file if we have a valid price
-    if (token.priceUsd === null || token.priceUsd === undefined) {
-      return;
-    }
-
-    const files = await loadCache(supabase);
-
-    if (files.has(filename)) {
-      // already exists -> skip upload
-      return;
-    }
-
-    // Create JSON with initial price
-    const jsonObj = {
-      address: token.address,
-      initial_price: token.priceUsd,
-      created_at: new Date().toISOString(),
-    };
-    const json = JSON.stringify(jsonObj);
-
-    const { error: uploadError } = await supabase.storage
-      .from(BUCKET_NAME)
-      // keep same upload style as your original file (Blob). In Node env, Blob exists in modern runtimes.
-      .upload(filePath, new Blob([json], { type: "application/json" }));
-
-    if (uploadError) {
-      // Only log errors that aren’t "already exists"
-      const msg = uploadError.message || "";
-      if (!msg.includes("The resource already exists")) {
-        console.error("[v1] upload error:", msg);
-      } else {
-        // Race: file was created by other process — add to cache so we don't retry repeatedly
-        files.add(filename);
-      }
-    } else {
-      console.log(`[v1] Created price_change file for ${token.address}`);
-      files.add(filename); // update cache
-    }
-  } catch (err) {
-    console.error("[v1] Exception in ensureInitialPriceFile:", err);
-  }
-};
-
-// ✅ Remove JSON for disappeared tokens (uses cachedFiles)
-const cleanupPriceChangeFiles = async (
-  supabase: any,
-  activeAddresses: string[]
-) => {
-  try {
-    const files = await loadCache(supabase);
-    if (!files) return;
-
-    // Find cached files not in activeAddresses
-    const toRemoveNames = [...files].filter((name) => {
-      const addr = name.replace(".json", "");
-      return !activeAddresses.includes(addr);
-    });
-
-    if (toRemoveNames.length === 0) return;
-
-    const toRemovePaths = toRemoveNames.map((name) => `${PRICE_CHANGE_FOLDER}/${name}`);
-
-    const { error: removeError } = await supabase.storage
-      .from(BUCKET_NAME)
-      .remove(toRemovePaths);
-
-    if (removeError) {
-      console.error("[v1] remove error:", removeError.message);
-    } else {
-      console.log(`[v1] Removed ${toRemovePaths.length} stale price_change files`);
-      // update cache
-      toRemoveNames.forEach((n) => files.delete(n));
-    }
-  } catch (err) {
-    console.error("[v1] Exception in cleanupPriceChangeFiles:", err);
-  }
-};
-
+// ✅ Mock fallback
 const generateMockTokensServer = () => {
   const grades = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"];
   return Array.from({ length: 12 }).map((_, i) => ({
@@ -210,26 +103,14 @@ const generateMockTokensServer = () => {
   }));
 };
 
+// ✅ GET endpoint
 export async function GET() {
   try {
     console.log("[v1] Starting tokens API request");
 
-    const supabase = getSupabaseClient();
-    if (!supabase) throw new Error("Supabase not initialized");
-
-    // Load cache once per refresh/server-run
-    await loadCache(supabase);
-
     const parsed = await downloadOverlapResults();
     const tokens = parsed && parsed.length > 0 ? parsed : generateMockTokensServer();
     const data_source = parsed ? "supabase_json" : "mock";
-
-    // Ensure JSON exists for new tokens (ensureInitialPriceFile checks cache internally)
-    await Promise.all(tokens.map((t) => ensureInitialPriceFile(supabase, t)));
-
-    // Cleanup stale tokens (uses cache)
-    const activeAddresses = tokens.map((t) => t.address);
-    await cleanupPriceChangeFiles(supabase, activeAddresses);
 
     return NextResponse.json(
       {
