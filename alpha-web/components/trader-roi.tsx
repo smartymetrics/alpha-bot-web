@@ -717,7 +717,7 @@ export default function TraderROIPage() {
         setTokenStatus({})
       } else {
         console.error("No jobId in response:", result)
-        alert("Failed to start analysis: No job ID returned")
+        alert("Failed to start analysis today due to high demand. Please try again later.")
       }
 
     } catch (err) {

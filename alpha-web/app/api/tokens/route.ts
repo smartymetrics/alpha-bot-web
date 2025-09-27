@@ -29,11 +29,9 @@ const parseOverlapResults = (json: any): any[] => {
   for (const [tokenId, history] of Object.entries(json)) {
     if (!Array.isArray(history) || history.length === 0) continue;
 
-    const latest = history[history.length - 1]?.result || {};
+    const latestEntry: any = history[history.length - 1];
+    const latest = latestEntry?.result || {};
     const meta = latest.token_metadata || {};
-
-    // Extract current_price_usd from the dexscreener object
-    const currentPriceUsd = latest.dexscreener?.current_price_usd ?? null;
 
     tokens.push({
       id: tokenId,
@@ -43,13 +41,14 @@ const parseOverlapResults = (json: any): any[] => {
       grade: latest.grade || "NONE",
       overlap_percentage: latest.overlap_percentage ?? 0,
       concentration: latest.concentration ?? 0,
-      discovered_at: latest.checked_at || null,
+      discovered_at:
+        latest.checked_at || latest.updated_at || latestEntry?.timestamp || null,
       dexscreener_url: `https://dexscreener.com/solana/${tokenId}`,
-      priceUsd: currentPriceUsd, // ✅ this is the price frontend should use as "call price"
+      priceUsd: latestEntry?.dexscreener?.current_price_usd ?? null,
     });
   }
 
-  // Sort by discovered_at descending
+  // Sort by most recent
   tokens.sort(
     (a, b) =>
       new Date(b.discovered_at || 0).getTime() -
@@ -84,51 +83,44 @@ const downloadOverlapResults = async (): Promise<any[] | null> => {
   }
 };
 
-// ✅ Mock fallback
-const generateMockTokensServer = () => {
-  const grades = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"];
-  return Array.from({ length: 12 }).map((_, i) => ({
-    id: `token_${i}`,
-    symbol: `TOK${i}`,
-    name: `Token ${i}`,
-    address: `${Math.random().toString(36).substring(2, 12)}`,
-    grade: grades[Math.floor(Math.random() * grades.length)],
-    overlap_percentage: Math.floor(Math.random() * 60),
-    concentration: Math.round(Math.random() * 1000) / 10,
-    discovered_at: new Date(
-      Date.now() - Math.random() * 86400000
-    ).toISOString(),
-    dexscreener_url: `https://dexscreener.com/solana/token_${i}`,
-    priceUsd: (Math.random() * 0.01).toFixed(6),
-  }));
-};
-
 // ✅ GET endpoint
 export async function GET() {
   try {
     console.log("[v1] Starting tokens API request");
 
     const parsed = await downloadOverlapResults();
-    const tokens = parsed && parsed.length > 0 ? parsed : generateMockTokensServer();
-    const data_source = parsed ? "supabase_json" : "mock";
+
+    if (!parsed || parsed.length === 0) {
+      // Return mining state instead of mock
+      return NextResponse.json(
+        {
+          tokens: [],
+          message: "⛏️ Mining... no new potential tokens to be bought",
+          last_updated: new Date().toISOString(),
+          total_count: 0,
+          data_source: "empty",
+        },
+        { status: 200, headers: { "Cache-Control": "no-store" } }
+      );
+    }
 
     return NextResponse.json(
       {
-        tokens,
+        tokens: parsed,
         last_updated: new Date().toISOString(),
-        total_count: tokens.length,
-        data_source,
+        total_count: parsed.length,
+        data_source: "supabase_json",
       },
       { status: 200, headers: { "Cache-Control": "no-store" } }
     );
   } catch (err) {
     console.error("[v1] Unexpected error in tokens API:", err);
-    const tokens = generateMockTokensServer();
     return NextResponse.json(
       {
-        tokens,
+        tokens: [],
+        message: "⚠️ Error fetching tokens",
         last_updated: new Date().toISOString(),
-        total_count: tokens.length,
+        total_count: 0,
         data_source: "error_fallback",
         error: String(err),
       },
